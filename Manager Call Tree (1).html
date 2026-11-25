@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manager Call Tree</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* VOICE: calm, exact, built for a stressful morning; nothing decorative
+   IDEA: an engineering datasheet / switchboard card: who calls whom, at a glance
+   PICTURE: the live call tree itself, nested lines like a phone-tree chart
+   COLOUR and TYPE: cobalt title strip, white, black ink, pale zones; amber only for gaps. Space Grotesk + Inter
+   LAYOUT: narrow title strip, load + filter bar, summary figures, then the tree */
+:root{color-scheme:light dark;--bg:light-dark(#fff,#0a0d18);--ink:light-dark(#111318,#e8ebf4);--mute:light-dark(#5b6170,#9aa1b4);
+--co:#1240e0;--zone:light-dark(#eef2ff,#141a2e);--rule:light-dark(#d9deea,#252c44);--warn:light-dark(#a35a00,#f0b45a);--warnbg:light-dark(#fff4e0,#2a2010);--ok:light-dark(#0b6b3a,#5fd39a)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Inter,system-ui,sans-serif;overflow-x:clip}
+h1,h2,h3{font-family:"Space Grotesk",Inter,sans-serif;font-weight:600;margin:0;line-height:1.1;text-wrap:balance}
+.strip{background:var(--co);color:#fff;padding:18px max(5vw,16px)}
+.strip h1{font-size:clamp(26px,4vw,38px)}.strip p{margin:4px 0 0;opacity:.85;font-size:15px}
+.band{padding:20px max(5vw,16px)}.wrap{max-width:1240px;margin:0 auto}
+.load{background:var(--zone);border-bottom:1px solid var(--rule)}
+.loadrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+button,.btn,select,input[type=search]{font:inherit;font-size:16px;min-height:44px;border-radius:8px;border:1px solid var(--rule);background:var(--bg);color:var(--ink);padding:0 14px}
+button,.btn{cursor:pointer;font-weight:500;display:inline-flex;align-items:center}
+button.pri,.btn.pri{background:var(--co);color:#fff;border-color:var(--co)}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible,textarea:focus-visible,.btn:focus-within{outline:3px solid #7d97ff;outline-offset:2px}
+input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
+.drop{flex:1 1 260px;border:2px dashed var(--rule);border-radius:10px;padding:10px 14px;color:var(--mute);font-size:14px}
+.drop.on{border-color:var(--co);color:var(--ink)}
+textarea{width:100%;min-height:120px;font:13px/1.4 ui-monospace,Menlo,monospace;border:1px solid var(--rule);border-radius:8px;padding:10px;background:var(--bg);color:var(--ink);margin-top:10px}
+.note{font-size:13px;color:var(--mute);margin:8px 0 0}
+.msg{font-size:14px;margin-top:8px}.msg.err{color:var(--warn)}
+.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:10px;align-items:end}
+label.f{display:grid;gap:4px;font-size:13px;color:var(--mute)}
+.chk{display:flex;gap:8px;align-items:center;font-size:14px;min-height:44px}
+.chk input{width:20px;height:20px}
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin-top:16px}
+.figs div{background:var(--bg);padding:12px 14px}.figs b{display:block;font:600 28px/1.1 "Space Grotesk",sans-serif}
+.figs span{font-size:13px;color:var(--mute)}.figs .w b{color:var(--warn)}
+.tools{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin:18px 0 8px}
+.tools .g{display:flex;flex-wrap:wrap;gap:8px}
+.tree{border-top:2px solid var(--ink)}
+details.mgr{border-bottom:1px solid var(--rule)}
+details.mgr details.mgr{border-bottom:0;margin-left:clamp(10px,3vw,28px);border-left:2px solid var(--co);padding-left:clamp(8px,2vw,16px)}
+summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 4px}
+summary::-webkit-details-marker{display:none}
+summary .car{width:22px;height:22px;display:grid;place-items:center;border-radius:5px;background:var(--co);color:#fff;font-size:12px;transition:transform .15s}
+details[open]>summary .car{transform:rotate(90deg)}
+.who h3{font-size:18px}.sub{font-size:13px;color:var(--mute)}
+.cnt{font-size:13px;color:var(--mute);text-align:right;white-space:nowrap}
+.cnt b{color:var(--ink);font-weight:600}
+.mhead{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:14px;padding:0 4px 10px 36px}
+.calls{list-style:none;margin:0 0 12px 36px;padding:0}
+.calls>li{display:grid;grid-template-columns:32px minmax(0,1.4fr) minmax(0,1.1fr) minmax(0,1.3fr) 44px;gap:10px;padding:10px 0;border-top:1px solid var(--rule);align-items:start;font-size:14px}
+.ord{font:600 14px "Space Grotesk",sans-serif;color:var(--co);padding-top:2px}
+.nm{font-weight:600;font-size:15px}
+.ph{white-space:nowrap;font-weight:500}a{color:var(--co)}:root[data-theme=dark] a{color:#8ea6ff}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) a{color:#8ea6ff}}
+.gap{color:var(--warn);background:var(--warnbg);border-radius:4px;padding:0 6px;font-size:12px;font-weight:600;white-space:nowrap}
+.tag{display:inline-block;font-size:12px;border:1px solid var(--rule);border-radius:4px;padding:0 6px;margin-top:2px;color:var(--mute)}
+.done{opacity:.55}.done .nm{text-decoration:line-through}
+.rc{width:24px;height:24px;margin-top:2px;accent-color:var(--ok)}
+.addr{font-size:13px;color:var(--mute)}
+.empty{padding:40px 0;color:var(--mute);text-align:center}
+.legend{font-size:13px;color:var(--mute)}
+.copied{font-size:13px;color:var(--ok);min-width:6em}
+@media(max-width:760px){.calls>li{grid-template-columns:28px minmax(0,1fr) 40px}.calls>li>.c3,.calls>li>.c4{grid-column:2}.calls>li>.rcw{grid-row:1;grid-column:3}.mhead,.calls{margin-left:0;padding-left:4px}}
+@media(prefers-reduced-motion:reduce){summary .car{transition:none}}
+@media print{.load,.tools,.filtersband,.rc{display:none}details.mgr>*{display:block}}
+</style>
+</head>
+<body>
+<header class="strip"><div class="wrap">
+<h1>Manager call tree</h1>
+<p>Load the latest export of the employee contact report. Each manager calls their direct reports; managers who report to a manager are nested under them.</p>
+</div></header>
+
+<section class="band load"><div class="wrap">
+<div class="loadrow">
+<label class="btn pri">Choose report file<input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,.xls"></label>
+<div class="drop" id="drop">Or drop a CSV / Excel export here</div>
+<button id="pasteBtn" type="button">Paste rows instead</button>
+<button id="sampleBtn" type="button">Show sample</button>
+</div>
+<div id="pasteBox" hidden>
+<textarea id="paste" placeholder="Paste rows copied from Excel, including the header row (Person Number, Assignment Number, Display Name…)"></textarea>
+<button class="pri" id="buildBtn" type="button" style="margin-top:8px">Build call tree</button>
+</div>
+<p class="msg" id="msg"></p>
+<p class="note">The file is read inside this page only. Nothing is uploaded or saved; reload the page and the data is gone. Columns are matched by header name, so column order doesn't matter.</p>
+</div></section>
+
+<section class="band filtersband"><div class="wrap">
+<div class="filters">
+<label class="f">Business unit<select id="fBU"></select></label>
+<label class="f">Department<select id="fDept"></select></label>
+<label class="f">Reporting establishment<select id="fEst"></select></label>
+<label class="f">Find a person<input type="search" id="fQ" placeholder="Name, title or email"></label>
+</div>
+<div class="loadrow" style="margin-top:6px">
+<label class="chk"><input type="checkbox" id="fActive" checked> Only active HR status</label>
+<label class="chk"><input type="checkbox" id="fHome"> Show home email &amp; address</label>
+<label class="chk"><input type="checkbox" id="fGaps"> Only people with contact gaps</label>
+</div>
+<div class="figs" id="figs"></div>
+</div></section>
+
+<main class="band" style="padding-top:0"><div class="wrap">
+<div class="tools">
+<div class="legend" id="legend"></div>
+<div class="g">
+<button type="button" id="expand">Expand all</button>
+<button type="button" id="collapse">Collapse all</button>
+<button type="button" id="resetCalls">Clear “reached” ticks</button>
+<button type="button" class="pri" id="copyAll">Copy tree for Excel</button>
+<span class="copied" id="copied" aria-live="polite"></span>
+</div>
+</div>
+<div class="tree" id="tree"><p class="empty">Load a report to build the call tree.</p></div>
+</div></main>
+
+<script>
+{
+const COLS={pn:'Person Number',an:'Assignment Number',name:'Display Name',wEmail:'Work Email',hEmail:'Home Email',hire:'Enterprise Hire Date',cc:'Primary Country Code',ac:'Primary Area Code',ph:'Primary Phone',a1:'Address Line 1',a2:'Address Line 2',a3:'Address Line 3',r1:'Region 1',r2:'Region 2',city:'City',zip:'Postal Code',ctry:'Address Country',ecName:'Emergency Contact Name',ecPh:'Emergency Contact Phone',leStart:'Legal Employer Start/Rehire Date',status:'Current HR Status',term:'Future Termination Date',bu:'Business Unit Name',dept:'Department Name',est:'Reporting Establishment Name',estLead:'Reporting Establishment Leader',job:'Job Title',btitle:'Business Title / Assignment Name',mName:'Line Manager Name',mEmail:'Line Manager E-Mail Address',mPh:'Line Manager Phone'};
+const REQ=['name','mName'];
+const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]/g,'');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=id=>document.getElementById(id);
+let people=[],reached=new Set();
+
+function parseDelimited(text){
+  const first=text.split(/\r?\n/)[0]||'';const d=(first.match(/\t/g)||[]).length>=(first.match(/,/g)||[]).length?'\t':',';
+  const rows=[];let row=[],f='',q=false;
+  for(let i=0;i<text.length;i++){const c=text[i];
+    if(q){if(c==='"'){if(text[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
+    else if(c==='"'&&f==='')q=true;
+    else if(c===d){row.push(f);f=''}
+    else if(c==='\n'||c==='\r'){if(c==='\r'&&text[i+1]==='\n')i++;row.push(f);rows.push(row);row=[];f=''}
+    else f+=c}
+  if(f!==''||row.length){row.push(f);rows.push(row)}
+  return rows.filter(r=>r.some(v=>String(v).trim()!==''));
+}
+function fromRows(rows){
+  let hi=rows.findIndex(r=>r.some(v=>norm(v)===norm(COLS.name)));
+  if(hi<0)throw new Error('Couldn’t find a “Display Name” header row. Include the header row from the report.');
+  const head=rows[hi].map(norm),idx={};
+  for(const k in COLS)idx[k]=head.indexOf(norm(COLS[k]));
+  const missing=REQ.filter(k=>idx[k]<0).map(k=>COLS[k]);
+  if(missing.length)throw new Error('Missing required column: '+missing.join(', '));
+  const lost=Object.keys(COLS).filter(k=>idx[k]<0).map(k=>COLS[k]);
+  const seen=new Map();
+  for(const r of rows.slice(hi+1)){
+    const o={};for(const k in COLS)o[k]=idx[k]<0?'':String(r[idx[k]]??'').trim();
+    if(!o.name)continue;
+    const key=o.pn||norm(o.wEmail)||norm(o.name);
+    if(!seen.has(key))seen.set(key,o);
+  }
+  return{list:[...seen.values()],lost};
+}
+const phone=(cc,ac,ph)=>{if(!ph)return'';const c=cc?'+'+String(cc).replace(/^\+/,'')+' ':'';return c+(ac?'('+ac+') ':'')+ph};
+const telHref=s=>'tel:'+String(s).replace(/[^\d+]/g,'');
+const pPhone=p=>phone(p.cc,p.ac,p.ph);
+const gaps=p=>{const g=[];if(!p.ph)g.push('No phone');if(!p.ecPh)g.push('No emergency contact');return g};
+const mKey=(email,name)=>email?'e:'+norm(email):'n:'+norm(name);
+
+function load(list,lost,src){
+  people=list;reached=new Set();
+  const opts=(sel,k)=>{const v=[...new Set(list.map(p=>p[k]).filter(Boolean))].sort();$(sel).innerHTML='<option value="">All</option>'+v.map(x=>`<option>${esc(x)}</option>`).join('')};
+  opts('fBU','bu');opts('fDept','dept');opts('fEst','est');
+  const m=$('msg');m.className='msg';
+  m.textContent=`Loaded ${list.length} people from ${src}.`+(lost.length?` Columns not found (left blank): ${lost.join(', ')}.`:'');
+  render();
+}
+function filtered(){
+  const bu=$('fBU').value,dp=$('fDept').value,es=$('fEst').value,q=$('fQ').value.trim().toLowerCase(),act=$('fActive').checked,g=$('fGaps').checked;
+  return people.filter(p=>(!bu||p.bu===bu)&&(!dp||p.dept===dp)&&(!es||p.est===es)&&(!act||!p.status||/^active/i.test(p.status))&&(!g||gaps(p).length)&&(!q||[p.name,p.job,p.btitle,p.wEmail,p.mName].join(' ').toLowerCase().includes(q)));
+}
+function build(list){
+  // Every employee belongs under their line manager. Managers found in the list are nested under their own manager.
+  const byKey=new Map();for(const p of people){if(p.wEmail)byKey.set('e:'+norm(p.wEmail),p);byKey.set('n:'+norm(p.name),p)}
+  const groups=new Map();
+  for(const p of list){const k=p.mName||p.mEmail?mKey(p.mEmail,p.mName):'none';
+    if(!groups.has(k))groups.set(k,{key:k,name:p.mName||'No line manager listed',email:p.mEmail,phone:p.mPh,self:byKey.get(k)||(p.mName?byKey.get('n:'+norm(p.mName)):null),reports:[],kids:[]});
+    groups.get(k).reports.push(p)}
+  for(const g of groups.values()){g.reports.sort((a,b)=>a.name.localeCompare(b.name));g.self?.wEmail&&(g.key2='e:'+norm(g.self.wEmail))}
+  const roots=[];
+  for(const g of groups.values()){const s=g.self;let parent=null;
+    if(s&&(s.mName||s.mEmail)){const pk=mKey(s.mEmail,s.mName);parent=groups.get(pk);if(parent===g)parent=null}
+    // avoid cycles
+    let a=parent,guard=0;while(a&&guard++<50){if(a===g){parent=null;break}const as=a.self;a=as&&(as.mName||as.mEmail)?groups.get(mKey(as.mEmail,as.mName)):null}
+    (parent?parent.kids:roots).push(g)}
+  const sortG=a=>a.sort((x,y)=>x.key==='none'?1:y.key==='none'?-1:x.name.localeCompare(y.name));
+  sortG(roots);for(const g of groups.values())sortG(g.kids);
+  return{roots,groups};
+}
+function total(g){return g.reports.length+g.kids.reduce((n,k)=>n+total(k),0)}
+function personRow(p,i){
+  const ph=pPhone(p),home=$('fHome').checked,id=p.pn||p.name,g=gaps(p),done=reached.has(id);
+  const addr=[p.a1,p.a2,p.a3,[p.city,p.r2||p.r1,p.zip].filter(Boolean).join(', '),p.ctry].filter(Boolean).join(' · ');
+  return `<li class="${done?'done':''}">
+<span class="ord">${i+1}</span>
+<div><div class="nm">${esc(p.name)}</div><div class="sub">${esc(p.btitle||p.job)}${p.dept?' · '+esc(p.dept):''}</div>
+${p.term?`<span class="tag">Leaving ${esc(p.term)}</span> `:''}${p.status&&!/^active/i.test(p.status)?`<span class="tag">${esc(p.status)}</span>`:''}</div>
+<div class="c3">${ph?`<a class="ph" href="${esc(telHref(ph))}">${esc(ph)}</a>`:'<span class="gap">No phone</span>'}
+${p.wEmail?`<div class="sub"><a href="mailto:${esc(p.wEmail)}">${esc(p.wEmail)}</a></div>`:''}
+${home&&p.hEmail?`<div class="sub">Home: ${esc(p.hEmail)}</div>`:''}</div>
+<div class="c4">${p.ecPh||p.ecName?`<div class="sub">Emergency contact</div><div>${esc(p.ecName||'Unnamed')}${p.ecPh?` · <a class="ph" href="${esc(telHref(p.ecPh))}">${esc(p.ecPh)}</a>`:''}</div>`:'<span class="gap">No emergency contact</span>'}
+${home&&addr?`<div class="addr">${esc(addr)}</div>`:`<div class="addr">${esc([p.city,p.r2||p.r1].filter(Boolean).join(', '))}</div>`}</div>
+<label class="rcw" title="Mark reached"><input type="checkbox" class="rc" data-id="${esc(id)}" ${done?'checked':''} aria-label="Reached ${esc(p.name)}"></label>
+</li>`;
+}
+function groupHTML(g,open){
+  const s=g.self,ph=s?pPhone(s):g.phone,n=g.reports.length,t=total(g);
+  const r=g.reports.filter(p=>reached.has(p.pn||p.name)).length;
+  const title=s?(s.btitle||s.job):(g.key==='none'?'Employees without a line manager on the report':'Manager not on this report');
+  return `<details class="mgr" ${open?'open':''}><summary><span class="car" aria-hidden="true">▶</span>
+<div class="who"><h3>${esc(g.name)}</h3><div class="sub">${esc(title)}</div></div>
+<div class="cnt"><b>${r}/${n}</b> reached${t>n?`<br>${t} in branch`:''}</div></summary>
+${g.key!=='none'?`<div class="mhead">${ph?`<span>Phone <a class="ph" href="${esc(telHref(ph))}">${esc(ph)}</a></span>`:'<span class="gap">No manager phone</span>'}
+${g.email?`<span><a href="mailto:${esc(g.email)}">${esc(g.email)}</a></span>`:''}
+<button type="button" class="cp" data-k="${esc(g.key)}" style="min-height:36px;font-size:14px">Copy this call list</button></div>`:''}
+<ol class="calls">${g.reports.map(personRow).join('')}</ol>
+${g.kids.map(k=>groupHTML(k,false)).join('')}</details>`;
+}
+let current={roots:[],groups:new Map()};
+function render(){
+  const list=filtered();current=build(list);
+  const mgrs=[...current.groups.values()].filter(g=>g.key!=='none').length;
+  const noPh=list.filter(p=>!p.ph).length,noEc=list.filter(p=>!p.ecPh).length,leaving=list.filter(p=>p.term).length;
+  $('figs').innerHTML=people.length?[[list.length,'people in view'],[mgrs,'managers calling'],[reached.size,'marked reached'],[noPh,'missing phone',noPh],[noEc,'missing emergency contact',noEc],[leaving,'with a future termination',0]]
+    .map(([v,l,w])=>`<div class="${w?'w':''}"><b>${v}</b><span>${l}</span></div>`).join(''):'';
+  const est=$('fEst').value&&list.find(p=>p.estLead)?.estLead;
+  $('legend').textContent=people.length?(est?`Establishment leader: ${est}. `:'')+'Call in the numbered order; tick each person once reached.':'';
+  $('tree').innerHTML=list.length?current.roots.map(g=>groupHTML(g,current.roots.length<=6)).join(''):`<p class="empty">${people.length?'No one matches these filters.':'Load a report to build the call tree.'}</p>`;
+}
+function rowsFor(g,out,depth){
+  const s=g.self;g.reports.forEach((p,i)=>out.push([depth,g.name,s?pPhone(s):g.phone,i+1,p.name,p.btitle||p.job,pPhone(p),p.wEmail,p.ecName,p.ecPh,p.dept,p.city,reached.has(p.pn||p.name)?'Yes':'']));
+  g.kids.forEach(k=>rowsFor(k,out,depth+1));return out;
+}
+const tsv=rows=>rows.map(r=>r.map(v=>String(v??'').replace(/[\t\n]/g,' ')).join('\t')).join('\n');
+const HDR=['Level','Caller (manager)','Caller phone','Call order','Contact','Title','Phone','Work email','Emergency contact','Emergency phone','Department','City','Reached'];
+async function copy(text){try{await navigator.clipboard.writeText(text);$('copied').textContent='Copied'}catch(e){$('copied').textContent='Copy blocked'}setTimeout(()=>$('copied').textContent='',2500)}
+
+async function readFile(f){
+  try{
+    if(/\.xlsx?$/i.test(f.name)){
+      if(!window.XLSX)throw new Error('Excel reader didn’t load. Save the report as CSV and try again.');
+      const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:false});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:false,defval:''});
+      const{list,lost}=fromRows(rows);load(list,lost,f.name);
+    }else{const{list,lost}=fromRows(parseDelimited(await f.text()));load(list,lost,f.name)}
+  }catch(e){$('msg').className='msg err';$('msg').textContent=e.message}
+}
+$('file').addEventListener('change',e=>{if(e.target.files[0])readFile(e.target.files[0]);e.target.value=''});
+const dz=$('drop');
+['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('on')}));
+['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('on')}));
+dz.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)readFile(f)});
+$('pasteBtn').addEventListener('click',()=>{$('pasteBox').hidden=!$('pasteBox').hidden;if(!$('pasteBox').hidden)$('paste').focus()});
+$('buildBtn').addEventListener('click',()=>{try{const{list,lost}=fromRows(parseDelimited($('paste').value));load(list,lost,'pasted rows')}catch(e){$('msg').className='msg err';$('msg').textContent=e.message}});
+['fBU','fDept','fEst','fActive','fHome','fGaps'].forEach(id=>$(id).addEventListener('change',render));
+$('fQ').addEventListener('input',render);
+$('tree').addEventListener('change',e=>{if(e.target.classList.contains('rc')){const id=e.target.dataset.id;e.target.checked?reached.add(id):reached.delete(id);
+  const open=[...document.querySelectorAll('details.mgr')].map(d=>d.open);render();document.querySelectorAll('details.mgr').forEach((d,i)=>d.open=open[i]??d.open)}});
+$('tree').addEventListener('click',e=>{const b=e.target.closest('.cp');if(!b)return;e.preventDefault();const g=current.groups.get(b.dataset.k);if(!g)return;
+  const lines=[`Call list for ${g.name}`,...g.reports.map((p,i)=>`${i+1}. ${p.name} — ${pPhone(p)||'no phone'}${p.ecPh?` (emergency: ${p.ecName||''} ${p.ecPh})`:''}`)];copy(lines.join('\n'))});
+$('expand').addEventListener('click',()=>document.querySelectorAll('details.mgr').forEach(d=>d.open=true));
+$('collapse').addEventListener('click',()=>document.querySelectorAll('details.mgr').forEach(d=>d.open=false));
+$('resetCalls').addEventListener('click',()=>{reached.clear();render()});
+$('copyAll').addEventListener('click',()=>{const out=[HDR];current.roots.forEach(g=>rowsFor(g,out,1));copy(tsv(out))});
+
+// Sample (fictional) data so the page opens in use
+const S=[['1001','Avery Cole','avery.cole@example.com','Director of Operations','','','',''],
+['1002','Jordan Reyes','jordan.reyes@example.com','Plant Manager','Avery Cole','avery.cole@example.com','555-0100','Sam Reyes|555-0190'],
+['1003','Priya Shah','priya.shah@example.com','Shift Supervisor','Jordan Reyes','jordan.reyes@example.com','555-0101','Dev Shah|555-0191'],
+['1004','Marcus Lee','marcus.lee@example.com','Machine Operator','Priya Shah','priya.shah@example.com','555-0102',''],
+['1005','Elena Novak','elena.novak@example.com','Machine Operator','Priya Shah','priya.shah@example.com','555-0102','Ivan Novak|555-0192'],
+['1006','Tom Okafor','tom.okafor@example.com','Maintenance Tech','Jordan Reyes','jordan.reyes@example.com','555-0101','Ada Okafor|555-0193'],
+['1007','Grace Kim','grace.kim@example.com','Logistics Lead','Avery Cole','avery.cole@example.com','555-0100','Min Kim|555-0194'],
+['1008','Luis Ortega','luis.ortega@example.com','Forklift Operator','Grace Kim','grace.kim@example.com','555-0107','Rosa Ortega|555-0195']];
+const PH={'1002':'555-0101','1003':'555-0102','1004':'','1005':'555-0104','1006':'555-0105','1007':'555-0107','1008':'555-0108','1001':'555-0100'};
+function sample(){const list=S.map(([pn,name,w,job,mn,me,mp,ec],i)=>{const[ecName,ecPh]=ec?ec.split('|'):['',''];
+  return{pn,an:'E'+pn,name,wEmail:w,hEmail:'',cc:'1',ac:'312',ph:PH[pn],city:'Joliet',r1:'IL',status:'Active - Payroll Eligible',term:pn==='1008'?'12/31/2026':'',bu:'Sample Manufacturing',dept:i<6?'Plant Operations':'Logistics',est:'Joliet Plant',estLead:'Avery Cole',job,btitle:job,mName:mn,mEmail:me,mPh:mp?'+1 (312) '+mp:'',ecName,ecPh}});
+  load(list,[],'sample data (fictional)');$('msg').textContent='Showing fictional sample data. Load your report to replace it.'}
+$('sampleBtn').addEventListener('click',sample);
+sample();
+}
+</script>
+</body>
+</html>
