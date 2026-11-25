@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.27.0/lib/msal-browser.min.js"></script>
 <style>
 /* VOICE: calm, exact, built for a stressful morning; nothing decorative
    IDEA: an engineering datasheet / switchboard card: who calls whom, at a glance
@@ -41,6 +42,14 @@ label.f{display:grid;gap:4px;font-size:13px;color:var(--mute)}
 .figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin-top:16px}
 .figs div{background:var(--bg);padding:12px 14px}.figs b{display:block;font:600 28px/1.1 "Space Grotesk",sans-serif}
 .figs span{font-size:13px;color:var(--mute)}.figs .w b{color:var(--warn)}
+.pick{border-bottom:1px solid var(--rule)}.big{font:600 20px/1.2 "Space Grotesk",sans-serif;color:var(--ink)}
+.pickrow{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+#fMgr{flex:1 1 320px;max-width:560px;font-size:18px;min-height:52px;border:2px solid var(--co);border-radius:8px;padding:0 14px;background:var(--bg);color:var(--ink)}
+.results{list-style:none;margin:8px 0 0;padding:0;max-width:560px;border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.results li+li{border-top:1px solid var(--rule)}
+.results button{width:100%;border:0;border-radius:0;min-height:52px;text-align:left;display:block;padding:8px 14px;background:var(--bg)}
+.results button:hover,.results button:focus-visible{background:var(--zone)}
+.results .sub{display:block}
 .tools{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin:18px 0 8px}
 .tools .g{display:flex;flex-wrap:wrap;gap:8px}
 .tree{border-top:2px solid var(--ink)}
@@ -70,16 +79,26 @@ details[open]>summary .car{transform:rotate(90deg)}
 .copied{font-size:13px;color:var(--ok);min-width:6em}
 @media(max-width:760px){.calls>li{grid-template-columns:28px minmax(0,1fr) 40px}.calls>li>.c3,.calls>li>.c4{grid-column:2}.calls>li>.rcw{grid-row:1;grid-column:3}.mhead,.calls{margin-left:0;padding-left:4px}}
 @media(prefers-reduced-motion:reduce){summary .car{transition:none}}
-@media print{.load,.tools,.filtersband,.rc{display:none}details.mgr>*{display:block}}
+@media print{.load,.tools,.pick .loadrow,.pickrow,.rc{display:none}details.mgr>*{display:block}}
 </style>
 </head>
 <body>
 <header class="strip"><div class="wrap">
 <h1>Manager call tree</h1>
-<p>Load the latest export of the employee contact report. Each manager calls their direct reports; managers who report to a manager are nested under them.</p>
+<p id="intro">Load the call tree report from the HR SharePoint library, then find yourself by last name or work email to see your direct reports.</p>
+<p id="popout" hidden><a href="" id="popLink" target="_blank" rel="noopener" style="color:#fff">Sign-in not working here? Open the call tree in a new tab</a></p>
 </div></header>
 
 <section class="band load"><div class="wrap">
+<div id="spBox" hidden>
+<div class="loadrow">
+<button class="pri" id="signIn" type="button">Sign in with Microsoft 365</button>
+<button id="reload" type="button" hidden>Refresh from SharePoint</button>
+<button id="signOut" type="button" hidden>Sign out</button>
+<span class="sub" id="who"></span>
+</div>
+</div>
+<div id="manualBox">
 <div class="loadrow">
 <label class="btn pri">Choose report file<input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,.xls"></label>
 <div class="drop" id="drop">Or drop a CSV / Excel export here</div>
@@ -90,21 +109,22 @@ details[open]>summary .car{transform:rotate(90deg)}
 <textarea id="paste" placeholder="Paste rows copied from Excel, including the header row (Person Number, Assignment Number, Display Name…)"></textarea>
 <button class="pri" id="buildBtn" type="button" style="margin-top:8px">Build call tree</button>
 </div>
+</div>
 <p class="msg" id="msg"></p>
-<p class="note">The file is read inside this page only. Nothing is uploaded or saved; reload the page and the data is gone. Columns are matched by header name, so column order doesn't matter.</p>
+<p class="note" id="note">The file is read inside this page only. Nothing is uploaded or saved; reload the page and the data is gone. Columns are matched by header name, so column order doesn't matter.</p>
 </div></section>
 
-<section class="band filtersband"><div class="wrap">
-<div class="filters">
-<label class="f">Business unit<select id="fBU"></select></label>
-<label class="f">Department<select id="fDept"></select></label>
-<label class="f">Reporting establishment<select id="fEst"></select></label>
-<label class="f">Find a person<input type="search" id="fQ" placeholder="Name, title or email"></label>
+<section class="band pick"><div class="wrap">
+<label class="f big" for="fMgr" id="pickLabel">Find yourself: type your last name or work email</label>
+<div class="pickrow" id="pickRow">
+<input type="search" id="fMgr" autocomplete="off" placeholder="e.g. Reyes or jordan.reyes@company.com" aria-controls="mgrResults">
+<button type="button" id="clearMgr">Clear</button>
 </div>
+<ul class="results" id="mgrResults" hidden></ul>
+<p class="msg" id="mgrMsg"></p>
 <div class="loadrow" style="margin-top:6px">
 <label class="chk"><input type="checkbox" id="fActive" checked> Only active HR status</label>
 <label class="chk"><input type="checkbox" id="fHome"> Show home email &amp; address</label>
-<label class="chk"><input type="checkbox" id="fGaps"> Only people with contact gaps</label>
 </div>
 <div class="figs" id="figs"></div>
 </div></section>
@@ -113,18 +133,32 @@ details[open]>summary .car{transform:rotate(90deg)}
 <div class="tools">
 <div class="legend" id="legend"></div>
 <div class="g">
-<button type="button" id="expand">Expand all</button>
-<button type="button" id="collapse">Collapse all</button>
 <button type="button" id="resetCalls">Clear “reached” ticks</button>
-<button type="button" class="pri" id="copyAll">Copy tree for Excel</button>
+<button type="button" class="pri" id="copyAll">Copy my call list for Excel</button>
 <span class="copied" id="copied" aria-live="polite"></span>
 </div>
 </div>
-<div class="tree" id="tree"><p class="empty">Load a report to build the call tree.</p></div>
+<div class="tree" id="tree"><p class="empty">Select your name above to see your direct reports.</p></div>
 </div></main>
 
 <script>
 {
+/* ===== SharePoint settings: fill these in once (see setup notes from IT) =====
+   tenantId  : Directory (tenant) ID of your Microsoft 365 organisation
+   clientId  : Application (client) ID of the app registration IT creates for this page
+   fileUrl   : full SharePoint address of the Excel file, e.g.
+               https://contoso.sharepoint.com/sites/HR/Call%20Tree/Call%20Tree%20Report%20-%20Current.xlsx
+   sheetName : leave '' to read the first sheet
+   lockToSignedInManager : true = a manager only sees their own direct reports (no name picker)
+   Leave tenantId/clientId/fileUrl empty to use manual file loading instead. */
+const CONFIG={
+  tenantId:'',
+  clientId:'',
+  fileUrl:'',
+  sheetName:'',
+  lockToSignedInManager:false
+};
+/* ============================================================================ */
 const COLS={pn:'Person Number',an:'Assignment Number',name:'Display Name',wEmail:'Work Email',hEmail:'Home Email',hire:'Enterprise Hire Date',cc:'Primary Country Code',ac:'Primary Area Code',ph:'Primary Phone',a1:'Address Line 1',a2:'Address Line 2',a3:'Address Line 3',r1:'Region 1',r2:'Region 2',city:'City',zip:'Postal Code',ctry:'Address Country',ecName:'Emergency Contact Name',ecPh:'Emergency Contact Phone',leStart:'Legal Employer Start/Rehire Date',status:'Current HR Status',term:'Future Termination Date',bu:'Business Unit Name',dept:'Department Name',est:'Reporting Establishment Name',estLead:'Reporting Establishment Leader',job:'Job Title',btitle:'Business Title / Assignment Name',mName:'Line Manager Name',mEmail:'Line Manager E-Mail Address',mPh:'Line Manager Phone'};
 const REQ=['name','mName'];
 const norm=s=>String(s??'').toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -169,35 +203,55 @@ const mKey=(email,name)=>email?'e:'+norm(email):'n:'+norm(name);
 
 function load(list,lost,src){
   people=list;reached=new Set();
-  const opts=(sel,k)=>{const v=[...new Set(list.map(p=>p[k]).filter(Boolean))].sort();$(sel).innerHTML='<option value="">All</option>'+v.map(x=>`<option>${esc(x)}</option>`).join('')};
-  opts('fBU','bu');opts('fDept','dept');opts('fEst','est');
+  buildMgrs();
   const m=$('msg');m.className='msg';
   m.textContent=`Loaded ${list.length} people from ${src}.`+(lost.length?` Columns not found (left blank): ${lost.join(', ')}.`:'');
   render();
 }
+let mgrs=new Map(),selKey='';
+function buildMgrs(){
+  mgrs=new Map();const names=new Map();
+  for(const p of people){if(!p.mName&&!p.mEmail)continue;const k=mKey(p.mEmail,p.mName);if(!mgrs.has(k)){mgrs.set(k,{k,name:p.mName||p.mEmail,email:p.mEmail});names.set(norm(p.mName),(names.get(norm(p.mName))||0)+1)}}
+  for(const m of mgrs.values())m.label=names.get(norm(m.name))>1&&m.email?`${m.name} (${m.email})`:m.name;
+  const byE=new Map(people.filter(p=>p.wEmail).map(p=>[norm(p.wEmail),p]));
+  for(const m of mgrs.values()){const me=m.email&&byE.get(norm(m.email));m.title=me?(me.btitle||me.job):'';m.last=lastName(m.name)}
+  $('mgrResults').hidden=true;
+  let saved='';if(!SP)try{saved=localStorage.getItem('ct-mgr')||''}catch(e){}
+  selKey='';$('fMgr').value='';if(saved&&mgrs.has(saved)){selKey=saved;$('fMgr').value=mgrs.get(saved).name}
+}
+const lastName=n=>{n=String(n||'').trim();return norm(n.includes(',')?n.split(',')[0]:n.split(/\s+/).pop())};
+function matches(q){
+  const t=q.trim().toLowerCase(),n=norm(t);if(n.length<2)return[];
+  return[...mgrs.values()].filter(m=>t.includes('@')?(m.email||'').toLowerCase().startsWith(t):
+    m.last.startsWith(n)||(m.email&&norm(m.email.split('@')[0]).includes(n))).sort((a,b)=>a.name.localeCompare(b.name)).slice(0,8);
+}
+function choose(k){
+  selKey=k;const m=mgrs.get(k);$('fMgr').value=m?m.name:'';$('mgrResults').hidden=true;
+  if(!SP)try{localStorage.setItem('ct-mgr',k)}catch(e){}
+  render();
+}
+function pickMgr(){
+  selKey='';if(!SP)try{localStorage.removeItem('ct-mgr')}catch(e){}
+  const q=$('fMgr').value,res=matches(q),box=$('mgrResults');
+  box.innerHTML=res.map(m=>`<li><button type="button" data-k="${esc(m.k)}"><b>${esc(m.name)}</b><span class="sub">${esc([m.email,m.title].filter(Boolean).join(' · '))}</span></button></li>`).join('');
+  box.hidden=!res.length;
+  render();
+}
 function filtered(){
-  const bu=$('fBU').value,dp=$('fDept').value,es=$('fEst').value,q=$('fQ').value.trim().toLowerCase(),act=$('fActive').checked,g=$('fGaps').checked;
-  return people.filter(p=>(!bu||p.bu===bu)&&(!dp||p.dept===dp)&&(!es||p.est===es)&&(!act||!p.status||/^active/i.test(p.status))&&(!g||gaps(p).length)&&(!q||[p.name,p.job,p.btitle,p.wEmail,p.mName].join(' ').toLowerCase().includes(q)));
+  const act=$('fActive').checked;
+  return selKey?people.filter(p=>(p.mName||p.mEmail)&&mKey(p.mEmail,p.mName)===selKey&&(!act||!p.status||/^active/i.test(p.status))):[];
 }
 function build(list){
-  // Every employee belongs under their line manager. Managers found in the list are nested under their own manager.
+  // Flat: one call group per line manager, containing only that manager's direct reports.
   const byKey=new Map();for(const p of people){if(p.wEmail)byKey.set('e:'+norm(p.wEmail),p);byKey.set('n:'+norm(p.name),p)}
   const groups=new Map();
   for(const p of list){const k=p.mName||p.mEmail?mKey(p.mEmail,p.mName):'none';
-    if(!groups.has(k))groups.set(k,{key:k,name:p.mName||'No line manager listed',email:p.mEmail,phone:p.mPh,self:byKey.get(k)||(p.mName?byKey.get('n:'+norm(p.mName)):null),reports:[],kids:[]});
+    if(!groups.has(k))groups.set(k,{key:k,name:p.mName||'No line manager listed',email:p.mEmail,phone:p.mPh,self:byKey.get(k)||(p.mName?byKey.get('n:'+norm(p.mName)):null),reports:[]});
     groups.get(k).reports.push(p)}
-  for(const g of groups.values()){g.reports.sort((a,b)=>a.name.localeCompare(b.name));g.self?.wEmail&&(g.key2='e:'+norm(g.self.wEmail))}
-  const roots=[];
-  for(const g of groups.values()){const s=g.self;let parent=null;
-    if(s&&(s.mName||s.mEmail)){const pk=mKey(s.mEmail,s.mName);parent=groups.get(pk);if(parent===g)parent=null}
-    // avoid cycles
-    let a=parent,guard=0;while(a&&guard++<50){if(a===g){parent=null;break}const as=a.self;a=as&&(as.mName||as.mEmail)?groups.get(mKey(as.mEmail,as.mName)):null}
-    (parent?parent.kids:roots).push(g)}
-  const sortG=a=>a.sort((x,y)=>x.key==='none'?1:y.key==='none'?-1:x.name.localeCompare(y.name));
-  sortG(roots);for(const g of groups.values())sortG(g.kids);
+  for(const g of groups.values())g.reports.sort((a,b)=>a.name.localeCompare(b.name));
+  const roots=[...groups.values()].sort((x,y)=>x.key==='none'?1:y.key==='none'?-1:x.name.localeCompare(y.name));
   return{roots,groups};
 }
-function total(g){return g.reports.length+g.kids.reduce((n,k)=>n+total(k),0)}
 function personRow(p,i){
   const ph=pPhone(p),home=$('fHome').checked,id=p.pn||p.name,g=gaps(p),done=reached.has(id);
   const addr=[p.a1,p.a2,p.a3,[p.city,p.r2||p.r1,p.zip].filter(Boolean).join(', '),p.ctry].filter(Boolean).join(' · ');
@@ -214,44 +268,49 @@ ${home&&addr?`<div class="addr">${esc(addr)}</div>`:`<div class="addr">${esc([p.
 </li>`;
 }
 function groupHTML(g,open){
-  const s=g.self,ph=s?pPhone(s):g.phone,n=g.reports.length,t=total(g);
+  const s=g.self,ph=g.phone||(s?pPhone(s):''),n=g.reports.length;
   const r=g.reports.filter(p=>reached.has(p.pn||p.name)).length;
-  const title=s?(s.btitle||s.job):(g.key==='none'?'Employees without a line manager on the report':'Manager not on this report');
+  const title=g.key==='none'?'Employees without a line manager on the report':[s?(s.btitle||s.job):'',`${n} direct report${n===1?'':'s'}`].filter(Boolean).join(' · ');
   return `<details class="mgr" ${open?'open':''}><summary><span class="car" aria-hidden="true">▶</span>
 <div class="who"><h3>${esc(g.name)}</h3><div class="sub">${esc(title)}</div></div>
-<div class="cnt"><b>${r}/${n}</b> reached${t>n?`<br>${t} in branch`:''}</div></summary>
+<div class="cnt"><b>${r}/${n}</b> reached</div></summary>
 ${g.key!=='none'?`<div class="mhead">${ph?`<span>Phone <a class="ph" href="${esc(telHref(ph))}">${esc(ph)}</a></span>`:'<span class="gap">No manager phone</span>'}
 ${g.email?`<span><a href="mailto:${esc(g.email)}">${esc(g.email)}</a></span>`:''}
 <button type="button" class="cp" data-k="${esc(g.key)}" style="min-height:36px;font-size:14px">Copy this call list</button></div>`:''}
-<ol class="calls">${g.reports.map(personRow).join('')}</ol>
-${g.kids.map(k=>groupHTML(k,false)).join('')}</details>`;
+<ol class="calls">${g.reports.map(personRow).join('')}</ol></details>`;
 }
 let current={roots:[],groups:new Map()};
 function render(){
   const list=filtered();current=build(list);
-  const mgrs=[...current.groups.values()].filter(g=>g.key!=='none').length;
+  const typed=$('fMgr').value.trim();
+  const bad=typed&&!selKey&&norm(typed).length>=2&&!matches(typed).length;
+  $('mgrMsg').className='msg'+(bad?' err':'');
+  $('mgrMsg').textContent=!people.length?'':bad?'No line manager with that last name or work email is on the report. Check the spelling, or contact HR.':typed&&!selKey&&norm(typed).length>=2?'Select your name from the list.':selKey&&!list.length?'You have no direct reports on this report with the current settings.':'';
   const noPh=list.filter(p=>!p.ph).length,noEc=list.filter(p=>!p.ecPh).length,leaving=list.filter(p=>p.term).length;
-  $('figs').innerHTML=people.length?[[list.length,'people in view'],[mgrs,'managers calling'],[reached.size,'marked reached'],[noPh,'missing phone',noPh],[noEc,'missing emergency contact',noEc],[leaving,'with a future termination',0]]
+  $('figs').innerHTML=selKey&&list.length?[[list.length,'direct reports'],[list.filter(p=>reached.has(p.pn||p.name)).length,'marked reached'],[noPh,'missing phone',noPh],[noEc,'missing emergency contact',noEc],[leaving,'with a future termination',0]]
     .map(([v,l,w])=>`<div class="${w?'w':''}"><b>${v}</b><span>${l}</span></div>`).join(''):'';
-  const est=$('fEst').value&&list.find(p=>p.estLead)?.estLead;
-  $('legend').textContent=people.length?(est?`Establishment leader: ${est}. `:'')+'Call in the numbered order; tick each person once reached.':'';
-  $('tree').innerHTML=list.length?current.roots.map(g=>groupHTML(g,current.roots.length<=6)).join(''):`<p class="empty">${people.length?'No one matches these filters.':'Load a report to build the call tree.'}</p>`;
+  $('legend').textContent=selKey&&list.length?'Call your direct reports in the numbered order; tick each person once reached.':'';
+  const emptyMsg=LOCK?(people.length?(selKey?'You have no direct reports on this report.':`Your account (${account?.username||''}) isn’t listed as a line manager on the report. Contact HR if this is wrong.`):'Sign in with Microsoft 365 to see your direct reports.'):(people.length?'Type your last name or work email above, then select your name.':'Load the call tree report, then find yourself by last name or work email.');
+  $('tree').innerHTML=list.length?current.roots.map(g=>groupHTML(g,true)).join(''):`<p class="empty">${esc(emptyMsg)}</p>`;
 }
-function rowsFor(g,out,depth){
-  const s=g.self;g.reports.forEach((p,i)=>out.push([depth,g.name,s?pPhone(s):g.phone,i+1,p.name,p.btitle||p.job,pPhone(p),p.wEmail,p.ecName,p.ecPh,p.dept,p.city,reached.has(p.pn||p.name)?'Yes':'']));
-  g.kids.forEach(k=>rowsFor(k,out,depth+1));return out;
+function rowsFor(g,out){
+  const s=g.self;g.reports.forEach((p,i)=>out.push([g.name,g.phone||(s?pPhone(s):''),i+1,p.name,p.btitle||p.job,pPhone(p),p.wEmail,p.ecName,p.ecPh,p.dept,p.city,reached.has(p.pn||p.name)?'Yes':'']));
+  return out;
 }
 const tsv=rows=>rows.map(r=>r.map(v=>String(v??'').replace(/[\t\n]/g,' ')).join('\t')).join('\n');
-const HDR=['Level','Caller (manager)','Caller phone','Call order','Contact','Title','Phone','Work email','Emergency contact','Emergency phone','Department','City','Reached'];
+const HDR=['Line manager (caller)','Caller phone','Call order','Contact','Title','Phone','Work email','Emergency contact','Emergency phone','Department','City','Reached'];
 async function copy(text){try{await navigator.clipboard.writeText(text);$('copied').textContent='Copied'}catch(e){$('copied').textContent='Copy blocked'}setTimeout(()=>$('copied').textContent='',2500)}
 
+function xlsxRows(buf){
+  const wb=XLSX.read(buf,{type:'array',cellDates:false});
+  const sh=CONFIG.sheetName&&wb.Sheets[CONFIG.sheetName]?wb.Sheets[CONFIG.sheetName]:wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(sh,{header:1,raw:false,defval:''});
+}
 async function readFile(f){
   try{
     if(/\.xlsx?$/i.test(f.name)){
       if(!window.XLSX)throw new Error('Excel reader didn’t load. Save the report as CSV and try again.');
-      const wb=XLSX.read(await f.arrayBuffer(),{type:'array',cellDates:false});
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:false,defval:''});
-      const{list,lost}=fromRows(rows);load(list,lost,f.name);
+      const{list,lost}=fromRows(xlsxRows(await f.arrayBuffer()));load(list,lost,f.name);
     }else{const{list,lost}=fromRows(parseDelimited(await f.text()));load(list,lost,f.name)}
   }catch(e){$('msg').className='msg err';$('msg').textContent=e.message}
 }
@@ -262,16 +321,17 @@ const dz=$('drop');
 dz.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)readFile(f)});
 $('pasteBtn').addEventListener('click',()=>{$('pasteBox').hidden=!$('pasteBox').hidden;if(!$('pasteBox').hidden)$('paste').focus()});
 $('buildBtn').addEventListener('click',()=>{try{const{list,lost}=fromRows(parseDelimited($('paste').value));load(list,lost,'pasted rows')}catch(e){$('msg').className='msg err';$('msg').textContent=e.message}});
-['fBU','fDept','fEst','fActive','fHome','fGaps'].forEach(id=>$(id).addEventListener('change',render));
-$('fQ').addEventListener('input',render);
+['fActive','fHome'].forEach(id=>$(id).addEventListener('change',render));
+$('fMgr').addEventListener('input',pickMgr);
+$('mgrResults').addEventListener('click',e=>{const b=e.target.closest('button[data-k]');if(b)choose(b.dataset.k)});
+$('fMgr').addEventListener('keydown',e=>{if(e.key==='Enter'){const r=matches($('fMgr').value);if(r.length===1){e.preventDefault();choose(r[0].k)}}});
+$('clearMgr').addEventListener('click',()=>{$('fMgr').value='';pickMgr();$('fMgr').focus()});
 $('tree').addEventListener('change',e=>{if(e.target.classList.contains('rc')){const id=e.target.dataset.id;e.target.checked?reached.add(id):reached.delete(id);
   const open=[...document.querySelectorAll('details.mgr')].map(d=>d.open);render();document.querySelectorAll('details.mgr').forEach((d,i)=>d.open=open[i]??d.open)}});
 $('tree').addEventListener('click',e=>{const b=e.target.closest('.cp');if(!b)return;e.preventDefault();const g=current.groups.get(b.dataset.k);if(!g)return;
   const lines=[`Call list for ${g.name}`,...g.reports.map((p,i)=>`${i+1}. ${p.name} — ${pPhone(p)||'no phone'}${p.ecPh?` (emergency: ${p.ecName||''} ${p.ecPh})`:''}`)];copy(lines.join('\n'))});
-$('expand').addEventListener('click',()=>document.querySelectorAll('details.mgr').forEach(d=>d.open=true));
-$('collapse').addEventListener('click',()=>document.querySelectorAll('details.mgr').forEach(d=>d.open=false));
 $('resetCalls').addEventListener('click',()=>{reached.clear();render()});
-$('copyAll').addEventListener('click',()=>{const out=[HDR];current.roots.forEach(g=>rowsFor(g,out,1));copy(tsv(out))});
+$('copyAll').addEventListener('click',()=>{const out=[HDR];current.roots.forEach(g=>rowsFor(g,out));copy(tsv(out))});
 
 // Sample (fictional) data so the page opens in use
 const S=[['1001','Avery Cole','avery.cole@example.com','Director of Operations','','','',''],
@@ -287,7 +347,91 @@ function sample(){const list=S.map(([pn,name,w,job,mn,me,mp,ec],i)=>{const[ecNam
   return{pn,an:'E'+pn,name,wEmail:w,hEmail:'',cc:'1',ac:'312',ph:PH[pn],city:'Joliet',r1:'IL',status:'Active - Payroll Eligible',term:pn==='1008'?'12/31/2026':'',bu:'Sample Manufacturing',dept:i<6?'Plant Operations':'Logistics',est:'Joliet Plant',estLead:'Avery Cole',job,btitle:job,mName:mn,mEmail:me,mPh:mp?'+1 (312) '+mp:'',ecName,ecPh}});
   load(list,[],'sample data (fictional)');$('msg').textContent='Showing fictional sample data. Load your report to replace it.'}
 $('sampleBtn').addEventListener('click',sample);
-sample();
+
+/* ---------- SharePoint (Microsoft Graph) loading ---------- */
+const SP=!!(CONFIG.tenantId&&CONFIG.clientId&&CONFIG.fileUrl);
+const LOCK=SP&&CONFIG.lockToSignedInManager;
+const SCOPES=['User.Read','Files.Read.All','Sites.Read.All'];
+let msalApp=null,account=null;
+const isPopupReturn=window.opener&&window.opener!==window&&/[#&?](code|error)=/.test(location.hash+location.search);
+const spMsg=(t,err)=>{$('msg').className='msg'+(err?' err':'');$('msg').textContent=t};
+async function graph(token,path){
+  const r=await fetch('https://graph.microsoft.com/v1.0'+path,{headers:{Authorization:'Bearer '+token}});
+  if(!r.ok){const e=new Error('Graph '+r.status);e.status=r.status;throw e}
+  return r.json();
+}
+async function findItem(token){
+  // 1) treat the address as a sharing URL
+  const id='u!'+btoa(unescape(encodeURIComponent(CONFIG.fileUrl))).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
+  try{return await graph(token,'/shares/'+id+'/driveItem')}catch(e){if(e.status===401)throw e}
+  // 2) work out site + library + path from the address
+  const u=new URL(CONFIG.fileUrl),parts=u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  const si=parts[0]==='sites'||parts[0]==='teams'?2:0;
+  const site=await graph(token,`/sites/${u.hostname}:/${si?parts.slice(0,2).map(encodeURIComponent).join('/'):''}`);
+  const drives=(await graph(token,`/sites/${site.id}/drives`)).value;
+  const full=decodeURIComponent(u.origin+u.pathname).toLowerCase();
+  const d=drives.filter(x=>full.startsWith(decodeURIComponent(x.webUrl).toLowerCase()+'/')).sort((a,b)=>b.webUrl.length-a.webUrl.length)[0];
+  if(!d)throw new Error('Couldn’t find the document library for the file address in the settings.');
+  const rest=full.slice(decodeURIComponent(d.webUrl).length+1);
+  const orig=decodeURIComponent(u.pathname).split('/').slice(-rest.split('/').length).map(encodeURIComponent).join('/');
+  return graph(token,`/drives/${d.id}/root:/${orig}`);
+}
+async function getToken(interactive){
+  try{return(await msalApp.acquireTokenSilent({scopes:SCOPES,account})).accessToken}
+  catch(e){if(!interactive)throw e;return(await msalApp.acquireTokenPopup({scopes:SCOPES,account})).accessToken}
+}
+async function loadFromSharePoint(interactive){
+  spMsg('Loading the call tree from SharePoint…');
+  try{
+    const token=await getToken(interactive);
+    const item=await findItem(token);
+    const url=item['@microsoft.graph.downloadUrl'];
+    if(!url)throw new Error('SharePoint didn’t return a download link for the file.');
+    const buf=await(await fetch(url)).arrayBuffer();
+    const{list,lost}=fromRows(/\.csv$/i.test(item.name)?parseDelimited(new TextDecoder().decode(buf)):xlsxRows(buf));
+    load(list,lost,item.name);
+    const when=item.lastModifiedDateTime?new Date(item.lastModifiedDateTime).toLocaleString():'';
+    spMsg(`Loaded from SharePoint: ${item.name}${when?' (updated '+when+')':''}.`+(lost.length?` Columns not found: ${lost.join(', ')}.`:''));
+    selectForAccount();
+  }catch(e){
+    const st=e.status;
+    spMsg(st===403||st===404?'You don’t have access to the call tree file in SharePoint, or the file address in the settings is wrong. Contact HR.':
+      st===401||/interaction_required|consent/i.test(e.message)?'Please sign in again.':'Couldn’t load from SharePoint: '+e.message,true);
+  }
+}
+function selectForAccount(){
+  if(!account)return;
+  const em=norm(account.username),nm=norm(account.name);
+  let k='';for(const m of mgrs.values())if(m.email&&norm(m.email)===em){k=m.k;break}
+  if(!k)for(const m of mgrs.values())if(nm&&norm(m.name)===nm){k=m.k;break}
+  if(k)choose(k);else render();
+}
+function showSignedIn(){
+  $('signIn').hidden=!!account;$('reload').hidden=$('signOut').hidden=!account;
+  $('who').textContent=account?'Signed in as '+(account.name||account.username):'';
+}
+async function initSP(){
+  $('spBox').hidden=false;$('manualBox').hidden=true;
+  $('intro').textContent=LOCK?'Sign in with your Microsoft 365 account to see your direct reports and call list.':'Sign in with your Microsoft 365 account, then find yourself by last name or work email.';
+  $('note').textContent='The call tree is read from the HR SharePoint file each time you open this page, using your own Microsoft 365 sign-in. Nothing is stored on this website.';
+  if(LOCK){$('pickRow').hidden=true;$('pickLabel').textContent='Your direct reports'}
+  if(window.self!==window.top){$('popout').hidden=false;$('popLink').href=location.href.split('#')[0]}
+  if(!window.msal){spMsg('The Microsoft sign-in component didn’t load. Check that cdn.jsdelivr.net isn’t blocked.',true);return}
+  msalApp=new msal.PublicClientApplication({auth:{clientId:CONFIG.clientId,authority:'https://login.microsoftonline.com/'+CONFIG.tenantId,redirectUri:location.origin+location.pathname},cache:{cacheLocation:'localStorage'}});
+  await msalApp.initialize();
+  account=msalApp.getAllAccounts()[0]||null;showSignedIn();render();
+  if(account)loadFromSharePoint(false);
+}
+$('signIn').addEventListener('click',async()=>{
+  try{const r=await msalApp.loginPopup({scopes:SCOPES,prompt:'select_account'});account=r.account;showSignedIn();loadFromSharePoint(true)}
+  catch(e){spMsg(/popup/i.test(e.errorCode||e.message)?'The sign-in window was blocked. Allow pop-ups for this page, or use “Open the call tree in a new tab”.':'Sign-in didn’t complete: '+(e.errorMessage||e.message),true)}
+});
+$('reload').addEventListener('click',()=>loadFromSharePoint(true));
+$('signOut').addEventListener('click',async()=>{const a=account;account=null;people=[];selKey='';showSignedIn();render();spMsg('');try{await msalApp.logoutPopup({account:a})}catch(e){}});
+
+if(isPopupReturn){document.body.innerHTML='<p style="padding:24px">Signing you in…</p>'}
+else if(SP){initSP()}
+else render();
 }
 </script>
 </body>
